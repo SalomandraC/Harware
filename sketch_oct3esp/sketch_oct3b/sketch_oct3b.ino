@@ -1,23 +1,25 @@
 #include <iarduino_RF433_Transmitter.h>
 #include <iarduino_RF433_Receiver.h>
+#include "DHT.h"
+#define DHTPIN 33
+#define DHTTYPE DHT11
 
 iarduino_RF433_Transmitter radioTX(2);
 iarduino_RF433_Receiver radioRX(4);
 
 const int buzzerPin = 27;
 const int lightsPin = 26;
-//const int DHpin = 33;
 
-byte dat[5];
 unsigned long lastSendRadio = 0;
 unsigned long lastSendTemp = 0;
 unsigned long lastBuzzerTime = 0;
 bool buzzerState = false;
 int number = 1;
 
+DHT dht(DHTPIN, DHTTYPE);
 void setup() {
   Serial.begin(115200);
-  //pinMode(DHpin, OUTPUT);
+  dht.begin();
   pinMode(buzzerPin, OUTPUT);
   pinMode(lightsPin, OUTPUT);
   
@@ -49,29 +51,28 @@ void loop() {
   if (radioRX.available()) {
     char receivedData[10] = "";
     radioRX.read(&receivedData, sizeof(receivedData));
-    Serial.print("Received: ");
-    Serial.println(receivedData);
+    Serial.println("Received: ");
+    Serial.print(receivedData);
   }
-  /*
+  
   // Температура каждые 2 секунды
   if (millis() - lastSendTemp > 2000) {
-    start_test();
-    Serial.print("Humdity = ");
-    Serial.print(dat[0], DEC);
-    Serial.print('.');
-    Serial.print(dat[1], DEC);
-    Serial.println('%');
-    Serial.print("Temperature = ");
-    Serial.print(dat[2], DEC);
-    Serial.print('.');
-    Serial.print(dat[3], DEC);
-    Serial.println('C');
+    // считывание данных температуры и влажности
+    float h = dht.readHumidity();
+    // температура в Цельсиях:
+    float t = dht.readTemperature();
+    Serial.print("Humidity: ");  //  "Влажность: "
+    Serial.print(h);
+    Serial.print(" %\t");
+    Serial.print("Temperature: ");  //  "Температура: "
+    Serial.print(t);
+    Serial.print(" *C ");
     lastSendTemp = millis();
   }
-  */
+  
   
   // Пищалка и светодиод (включаем на 1 секунду каждые 10 секунд)
-  if (millis() - lastBuzzerTime > 10000) {
+  if (millis() - lastBuzzerTime > 5000) {
     tone(buzzerPin, 500);
     digitalWrite(lightsPin, HIGH);
     delay(1000); // Включаем на 1 секунду
@@ -82,34 +83,3 @@ void loop() {
   
   delay(10);
 }
-/*
-byte read_data() {
-  byte i = 0;
-  byte result = 0;
-  for (i = 0; i < 8; i++) {
-    while (digitalRead(DHpin) == LOW);
-    delayMicroseconds(30);
-    if (digitalRead(DHpin) == HIGH)
-      result |= (1 << (8 - i));
-    while (digitalRead(DHpin) == HIGH);
-  }
-  return result;
-}
-
-void start_test() {
-  digitalWrite(DHpin, LOW);
-  delay(30);
-  digitalWrite(DHpin, HIGH);
-  delayMicroseconds(40);
-  pinMode(DHpin, INPUT);
-  while(digitalRead(DHpin) == HIGH);
-  delayMicroseconds(80);
-  
-  if(digitalRead(DHpin) == LOW)
-    delayMicroseconds(80);
-  for(int i = 0; i < 5; i++)
-    dat[i] = read_data();
-  pinMode(DHpin, OUTPUT);
-  digitalWrite(DHpin, HIGH);
-}
-*/
