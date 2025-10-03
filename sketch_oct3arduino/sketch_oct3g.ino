@@ -15,7 +15,6 @@ void setup() {
 }
 
 void loop() {
-  // Простая версия - принимаем строку
   if (radioRX.available()) {
     char receivedData[10] = "";
     radioRX.read(&receivedData, sizeof(receivedData));
