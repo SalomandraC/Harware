@@ -11,7 +11,7 @@ void setup() {
   radioRX.startListening();
   
   Serial.println("Arduino Uno Receiver ready");
-  Serial.println("Waiting for numbers from ESP32...");
+  //Serial.println("Waiting for numbers from ESP32...");
 }
 
 void loop() {
