@@ -2,17 +2,31 @@
 #include <iarduino_RF433_Receiver.h>
 #include "DHT.h"
 #include "WiFi.h"
+#include "HTTPClient.h"
+#include "ArduinoJson.h"
 #define DHTPIN 33
 #define DHTTYPE DHT11
 
 iarduino_RF433_Transmitter radioTX(2);
 iarduino_RF433_Receiver radioRX(4);
 
+enum class SensorType {
+    TEMPERATURE = 0,
+    HUMIDITY = 1,
+    ALERT = 2,
+    FIRE = 3
+};
+
+const char* sensorTypeStrings[] = {"temperature", "humidity", "alert"};
+
 const int buzzerPin = 27;
 const int lightsPin = 26;
 
 const char* ssid = "narzo 50A";
 const char* password =  "m7ivjj7c";
+
+const char* id = "EIto";
+const char* serverUrl = "https://2g6nw0-194-87-191-168.ru.tuna.am";
 
 unsigned long lastSendRadio = 0;
 unsigned long lastSendTemp = 0;
@@ -63,6 +77,9 @@ void loop() {
     Serial.println(number);
     number++;
     if (number > 10) number = 1;
+    if(number > 4 && number < 7){
+      sendSensorData(SensorType::ALERT, 1, "%");
+    }
     
     lastSendRadio = millis();
   }
@@ -87,6 +104,12 @@ void loop() {
     Serial.print("Temperature: ");  //  "Температура: "
     Serial.print(t);
     Serial.print(" *C ");
+    if (!isnan(t)) {
+      sendSensorData(SensorType::TEMPERATURE, t, "C");
+    }
+    if (!isnan(h)) {
+      sendSensorData(SensorType::HUMIDITY, h, "H");
+    }
     lastSendTemp = millis();
   }
   
@@ -100,6 +123,83 @@ void loop() {
     digitalWrite(lightsPin, LOW);
     lastBuzzerTime = millis();
   }
-  
+
   delay(10);
 }
+
+void sendSensorData(SensorType type, float value, const char* message) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+
+        String fullUrl = String(serverUrl) + "/api/v1/devices/{device_id}/readings";
+        
+        http.begin(fullUrl);
+        http.addHeader("Content-Type", "application/json");
+        
+        // Создаем JSON объект
+        DynamicJsonDocument doc(512);
+        doc["device_id"] = id;
+        doc["sensor_type"] = sensorTypeStrings[static_cast<int>(type)];
+        doc["value"] = value;
+        doc["unit"] = message;
+        
+        String jsonString;
+        serializeJson(doc, jsonString);
+        int httpResponseCode = http.POST(jsonString);
+        
+        Serial.print("HTTP Response code: ");
+        Serial.println(httpResponseCode);
+        
+        if (httpResponseCode > 0) {
+            String response = http.getString();
+            Serial.println("Response: " + response);
+        } else {
+            Serial.print("Error in HTTP request: ");
+            Serial.println(httpResponseCode);
+        }
+        
+        http.end();
+    } else {
+        Serial.println("WiFi not connected!");
+    }
+}
+
+
+void sendAlertrData(SensorType type, float value, const char* message) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+
+        String fullUrl = String(serverUrl) + "/api/v1/devices/{device_id}/readings";
+        
+        http.begin(fullUrl);
+        http.addHeader("Content-Type", "application/json");
+        
+        // Создаем JSON объект
+        DynamicJsonDocument doc(512);
+        doc["device_id"] = id;
+        doc["sensor_type"] = sensorTypeStrings[static_cast<int>(type)];
+        doc["value"] = value;
+        doc["unit"] = message;
+        
+        String jsonString;
+        serializeJson(doc, jsonString);
+        int httpResponseCode = http.POST(jsonString);
+        
+        Serial.print("HTTP Response code: ");
+        Serial.println(httpResponseCode);
+        
+        if (httpResponseCode > 0) {
+            String response = http.getString();
+            Serial.println("Response: " + response);
+        } else {
+            Serial.print("Error in HTTP request: ");
+            Serial.println(httpResponseCode);
+        }
+        
+        http.end();
+    } else {
+        Serial.println("WiFi not connected!");
+    }
+}
+
+
