@@ -1,270 +1,289 @@
+#include <iarduino_RF433_Transmitter.h>
+#include <iarduino_RF433_Receiver.h>
+#include "DHT.h"
+#include "WiFi.h"
+#include "HTTPClient.h"
+#include "ArduinoJson.h"
 #include <RH_ASK.h>
 #include <SPI.h>
+#define DHTPIN 33
+#define DHTTYPE DHT11
 
-#define LCD_CS A3 
-#define LCD_CD A2 
-#define LCD_WR A1 
-#define LCD_RD A0 
-#define LCD_RESET A4 
+RH_ASK rfdriver(2000, 0, 2, 0);
 
-#include <SPI.h>
-#include "Adafruit_GFX.h"
-#include <MCUFRIEND_kbv.h>
 
-MCUFRIEND_kbv tft; 
-
-#define BLACK   0x0000
-#define DARKGRAY 0x4208
-#define BLUE    0x001F
-#define LIGHTBLUE 0x051F
-#define RED     0xF800
-#define GREEN   0x07E0
-#define CYAN    0x07FF
-#define MAGENTA 0xF81F
-#define YELLOW  0xFFE0
-#define WHITE   0xFFFF
-#define GRAY    0x8410
-
-#define NUM_DEVICES 5
-#define ROW_HEIGHT 38
-#define STATUS_HEIGHT 28
-
-int currentPage = 0;
-int selectedRow = 0;
-int lastSelectedRow = -1;
-int i = 0;
-
-#define JOY_VRX A5
-#define JOY_VRY A4
-#define BTN_SELECT 4
-
-RH_ASK rfdriver(4000, 3, 0, 0);
-
-unsigned long lastMove = 0;
-const unsigned long MOVE_DELAY = 200;
-unsigned long SendTemp = 0;
-
-// ---------------------
-struct Device {
-  const char* name;
-  const char* location;
-  const char* status;
-};
-Device devices[NUM_DEVICES] = {
-  {"Climate", "Main Room", "22°C"},
-  {"Lock", "Front Door", "ON"},
-  {"Lights", "Living Room", "70%"},
-  {"Music", "Kitchen", "Playing ♫"},
-  {"Camera", "Backyard", "Active"}
+enum class SensorType {
+    TEMPERATURE = 0,
+    HUMIDITY = 1,
+    ALERT = 2,
+    FIRE = 3
 };
 
-const unsigned long MAX_WAIT_TIME = 5000;
 
-// ---------------------
+enum class AlertType {
+    STUDY,
+    ERROR,
+    TEMPERATURE,
+    HUMIDITY,
+    MOTION,
+    BATTERY
+};
+
+enum class Alert {
+    SOUND,
+    LIGHT,
+    SLIGHT,
+    NONE_ALERT
+};
+
+
+void sendSensorData(SensorType type, float value, const char* unit);
+void sendAlertData(AlertType alert_type, const char* message, const char* severity);
+
+String getSensorTypeName(SensorType sensor) {
+    switch (sensor) {
+        case SensorType::TEMPERATURE:
+            return "temperature";
+        case SensorType::HUMIDITY:
+            return "humidity";
+        case SensorType::ALERT:
+            return "alert";
+        case SensorType::FIRE:
+            return "fire";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+
+String getAlertMessage(AlertType alert) {
+    switch (alert) {
+        case AlertType::STUDY:
+            return "study";
+        case AlertType::ERROR:
+            return "error";
+        case AlertType::TEMPERATURE:
+            return "temperature";
+        case AlertType::HUMIDITY:
+            return "humidity level critical";
+        case AlertType::MOTION:
+            return "motion";
+        case AlertType::BATTERY:
+            return "battery";
+        default:
+            return "Unknown alert";
+    }
+}
+
+
+const int buzzerPin = 27;
+const int lightsPin = 26;
+const int pin_analog_flame = 32;
+
+const char* ssid = "realme 8";
+const char* password =  "einmn6cw";
+
+const char* id = "EIto";
+const char* serverUrl = "https://xyr097-194-87-191-168.ru.tuna.am";
+
+unsigned long lastSendRadio = 0;
+unsigned long lastSendTemp = 0;
+unsigned long lastBuzzerTime = 0;
+unsigned long lastFlameTime = 0;
+bool buzzerState = false;
+int number = 1;
+byte tries = 10;
+
+DHT dht(DHTPIN, DHTTYPE);
+Alert alert = Alert::NONE_ALERT;
+
+
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+  dht.begin();
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(lightsPin, OUTPUT);
+  pinMode(pin_analog_flame, INPUT);
+
+
+  while (--tries && WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.println(".");
+  }
+  if (WiFi.status() != WL_CONNECTED)  {
+    Serial.println("Non Connecting to WiFi..");
+  }
+  else  {
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+  }
 
   if (!rfdriver.init()) {
     Serial.println("RF init failed");
   } else {
     Serial.println("RF init OK");
   }
-
-  Serial.println("Arduino Uno Receiver ready");
-  Serial.println("Waiting for numbers from ESP32...");
-
-  // uint16_t ID = tft.readID();
-  // if (ID == 0xD3D3) ID = 0x9481;
-  // tft.begin(ID);
-  // tft.setRotation(1);
-  // tft.fillScreen(BLACK);
-
-  // showSplashScreen();
-
-  // drawHeader();
-  // drawTable();
+  Serial.println("ESP32 Ready");
 }
 
-void loop() {
-  // readJoystick();
-  // readButton();
-  /*
-  
-  unsigned long startTime = millis();
-  if (millis() - SendTemp > 10000) {
-    i = 1 - i;
+void loop() {  
+  // Температура каждые 2 секунды
+  if (millis() - lastSendTemp > 2000) {
+    // считывание данных температуры и влажности
+    float h = dht.readHumidity();
+    // температура в Цельсиях:
+    float t = dht.readTemperature();
+    Serial.print("Humidity: ");  //  "Влажность: "
+    Serial.print(h);
+    Serial.print(" %\t");
+    Serial.print("Temperature: ");  //  "Температура: "
+    Serial.print(t);
+    Serial.print(" *C ");
+    float ht = t + 10000;
+    float hh = h + 20000;
+    char buf1[16];
+    char buf2[16];
+    snprintf(buf1, sizeof(buf1), "%f", hh);
+    rfdriver.send((uint8_t*)buf1, strlen(buf1));
+    rfdriver.waitPacketSent();
+    snprintf(buf2, sizeof(buf2), "%f", ht);
+    rfdriver.send((uint8_t*)buf2, strlen(buf2));
+    rfdriver.waitPacketSent();
+    if (!isnan(t)) {
+      if (t > 40.0) {
+        char alertMsg[60];
+        sprintf(alertMsg, "High temperature detected: %.1f°C", t);
+        sendAlertData(AlertType::TEMPERATURE, alertMsg, "warning");
+        alert = Alert::SOUND;
+      }
+      else {
+        sendSensorData(SensorType::TEMPERATURE, t, "C");
+      }
+    }
+    if (!isnan(h)) {
+      if (h > 80.0) {
+        char alertMsg[60];
+        sprintf(alertMsg, "High humidity detected");
+        sendAlertData(AlertType::HUMIDITY, alertMsg, "warning");
+        alert = Alert::LIGHT;
+      }
+      else {
+        sendSensorData(SensorType::HUMIDITY, h, "H");
+      }
+      lastSendTemp = millis();
+    }
+  }
+  // Проверка пламени раз в секунду
+  if (millis() - lastFlameTime > 1000) {
+    float Analog = analogRead (pin_analog_flame);
+    Serial.println("Значение аналогового сигнала огня: "); 
+    Serial.print(Analog);
+    if (Analog < 5000){
+      sendSensorData(SensorType::FIRE, Analog, "F");
+    } else {
+      char* alertMsg = "FIRE!";
+      sendAlertData(AlertType::MOTION, alertMsg, "alert");
+      alert = Alert::SLIGHT;
+    }
     char buf[16];
-    snprintf(buf, sizeof(buf), "%d", i);
-    rfdriverRx.send((uint8_t*)buf, strlen(buf));
-    rfdriverRx.waitPacketSent(1500);
-    SendTemp = millis();
+    float hAnalog = Analog + 30000;
+    snprintf(buf, sizeof(buf), "%f", hAnalog);
+    rfdriver.send((uint8_t*)buf, strlen(buf));
+    rfdriver.waitPacketSent();
+    lastFlameTime = millis();
+  }
+  // Пищалка и светодиод (включаем на 1 секунду каждые 5 секунд)
+  if (alert == Alert::LIGHT) {
+    digitalWrite(lightsPin, HIGH);
+  } 
+  else if (alert == Alert::SOUND){
+    tone(buzzerPin, 1500);
+  }
+  else if (alert == Alert::SLIGHT) {
+    digitalWrite(lightsPin, HIGH);
+    tone(buzzerPin, 1500);
+  }
+  else {
+    noTone(buzzerPin);
+    digitalWrite(lightsPin, LOW);
   }
 
-  */
-  static int number = 1;
-  static unsigned long lastSend = 0;
-  uint8_t buf[RH_ASK_MAX_MESSAGE_LEN];
-  uint8_t buflen = sizeof(buf);
-  if (rfdriver.recv(buf, &buflen)) { // блокирует короткий момент при приеме
-      buf[buflen] = 0; // терминируем строку
-      float receivedValue = atof((char*)buf);
-      int currentType = (int)receivedValue / 10000;
-      float currentValue = receivedValue - (currentType * 10000);
-      if (currentType == 2)
-        Serial.println("Текущая влажность: " + String(currentValue));
-      else if (currentType == 1)
-        Serial.println("Текущая температура: " + String(currentValue));
-      else if (currentType == 3)
-        Serial.println("Огонь: " + String(currentValue));
+  delay(10);
+}
+
+void sendSensorData(SensorType type, float value, const char* unit) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+
+        String fullUrl = String(serverUrl) + "/api/v1/devices/{device_id}/readings";
+        
+        http.begin(fullUrl);
+        http.addHeader("Content-Type", "application/json");
+        
+        // Создаем JSON объект
+        DynamicJsonDocument doc(512);
+        doc["device_id"] = id;
+        doc["sensor_type"] = getSensorTypeName(type);
+        doc["value"] = value;
+        doc["unit"] = unit;
+        
+        String jsonString;
+        serializeJson(doc, jsonString);
+        int httpResponseCode = http.POST(jsonString);
+        
+        Serial.print("HTTP Response code: ");
+        Serial.println(httpResponseCode);
+        
+        if (httpResponseCode > 0) {
+            String response = http.getString();
+            Serial.println("Response: " + response);
+        } else {
+            Serial.print("Error in HTTP request: ");
+            Serial.println(httpResponseCode);
+        }
+        
+        http.end();
+    } else {
+        Serial.println("WiFi not connected!");
     }
 }
 
-// =========================
-// UI ELEMENTS
-// =========================
-void drawHeader() {
-  tft.fillRect(0, 0, tft.width(), STATUS_HEIGHT, DARKGRAY);
-  tft.setTextColor(WHITE);
-  tft.setTextSize(2);
-  tft.setCursor(10, 6);
-  tft.print("Smart Control");
-  drawBattery(250, 5, 40, 18, 72);
-}
 
-void drawBattery(int x, int y, int w, int h, int percent) {
-  tft.drawRect(x, y, w, h, WHITE);
-  tft.fillRect(x + w, y + h/4, 4, h/2, WHITE);
-  int fill = (w - 2) * percent / 100;
-  tft.fillRect(x + 1, y + 1, fill, h - 2, GREEN);
-}
+void sendAlertData(AlertType alert_type, const char* message, const char* severity) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
 
-// =========================
-// TABLE SCREEN
-// =========================
-void drawTable() {
-  currentPage = 0;
-  fadeOut();
-  drawHeader();
-
-  for (int i = 0; i < NUM_DEVICES; i++) {
-    int y = STATUS_HEIGHT + 5 + i * ROW_HEIGHT;
-    uint16_t color = (i == selectedRow) ? GRAY : BLACK;
-    tft.fillRect(0, y, tft.width(), ROW_HEIGHT - 1, color);
-
-    tft.setTextColor(WHITE);
-    tft.setTextSize(2);
-    tft.setCursor(10, y + 8);
-    tft.print(devices[i].name);
-
-    tft.setCursor(130, y + 8);
-    // tft.setTextColor(LIGHTBLUE);
-    tft.print(devices[i].location);
-
-    tft.setCursor(250, y + 8);
-    // tft.setTextColor(YELLOW);
-    tft.print(devices[i].status);
-  }
-}
-
-// =========================
-// DEVICE PAGE
-// =========================
-void drawPage() {
-  currentPage = 1;
-  fadeOut();
-  drawHeader();
-
-//   tft.setTextColor(LIGHTBLUE);
-  tft.setTextSize(3);
-  tft.setCursor(20, 60);
-  tft.print(devices[selectedRow].name);
-
-  tft.setTextSize(2);
-  tft.setTextColor(WHITE);
-  tft.setCursor(20, 110);
-  tft.print("Location:");
-//   tft.setTextColor(YELLOW);
-  tft.setCursor(150, 110);
-  tft.print(devices[selectedRow].location);
-  tft.setTextColor(WHITE);
-  tft.setCursor(20, 150);
-  tft.print("Status:");
-//   tft.setTextColor(GREEN);
-  tft.setCursor(150, 150);
-  tft.print(devices[selectedRow].status);
-}
-
-// =========================
-// ANIMATION: Fade Out
-// =========================
-void fadeOut() {
-  for (int i = 0; i < 3; i++) {
-    tft.fillScreen(BLACK);
-    delay(20);
-  }
-}
-
-// =========================
-// INPUT HANDLERS
-// =========================
-void readJoystick() {
-  int y = analogRead(JOY_VRX);
-  if (millis() - lastMove > MOVE_DELAY) {
-    if (currentPage == 0) {
-      if (y < 400 && selectedRow > 0) { selectedRow--; drawTable(); lastMove = millis(); }
-      else if (y > 600 && selectedRow < NUM_DEVICES - 1) { selectedRow++; drawTable(); lastMove = millis(); }
+        String fullUrl = String(serverUrl) + "/api/v1/alerts/";
+        
+        http.begin(fullUrl);
+        http.addHeader("Content-Type", "application/json");
+        
+        // Создаем JSON объект
+        DynamicJsonDocument doc(512);
+        doc["device_id"] = id;
+        doc["message"] = message;
+        doc["severity"] = severity;
+        doc["alert_type"] = getAlertMessage(alert_type);
+        
+        String jsonString;
+        serializeJson(doc, jsonString);
+        int httpResponseCode = http.POST(jsonString);
+        
+        Serial.print("Sending alert: ");
+        
+        if (httpResponseCode > 0) {
+            String response = http.getString();
+            Serial.println("Response: " + response);
+        } else {
+            Serial.print("Error in HTTP request: ");
+            Serial.println(httpResponseCode);
+        }
+        
+        http.end();
+    } else {
+        Serial.println("WiFi not connected!");
     }
-  }
-}
-
-void readButton() {
-  static unsigned long lastPress = 0;
-  if (digitalRead(BTN_SELECT) == LOW && millis() - lastPress > 250) {
-    lastPress = millis();
-    if (currentPage == 0) drawPage();
-    else drawTable();
-    currentPage = 1 - currentPage;
-  }
-}
-
-// экранчик
-void showSplashScreen() {
-  tft.fillScreen(BLACK);
-
-  // Цвета и шрифты
-  tft.setTextSize(3);
-  tft.setTextColor(CYAN);
-
-  String title = "Smart Control";
-  int x = (tft.width() - title.length() * 18) / 2; // центрирование по горизонтали
-  int y = 100;
-
-  // Эффект "появления" букв
-  for (int i = 0; i < title.length(); i++) {
-    tft.setCursor(x + i * 18, y);
-    tft.print(title[i]);
-    delay(100);
-  }
-
-  // Легкое мигание после появления
-  delay(200);
-  for (int i = 0; i < 2; i++) {
-    tft.setTextColor(BLACK);
-    tft.setCursor(x, y);
-    tft.print(title);
-    delay(150);
-    tft.setTextColor(CYAN);
-    tft.setCursor(x, y);
-    tft.print(title);
-    delay(150);
-  }
-
-  // Подпись
-  tft.setTextSize(1);
-  tft.setTextColor(WHITE);
-  tft.setCursor((tft.width() - 9 * 6) / 2, y + 40); // центр "by hardcode"
-  tft.print("by Hardcode");
-
-  delay(1000);
-  tft.fillScreen(BLACK);
 }
