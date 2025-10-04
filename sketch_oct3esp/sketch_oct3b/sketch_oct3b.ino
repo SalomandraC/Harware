@@ -8,7 +8,6 @@
 #include <SPI.h>
 #define DHTPIN 33
 #define DHTTYPE DHT11
-const char* alertTypeStrings[] = {"study", "error", "temperature", "humidity", "motion", "battery"};
 
 RH_ASK rfdriver(2000, 0, 2, 0);
 
