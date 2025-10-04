@@ -10,6 +10,17 @@
 iarduino_RF433_Transmitter radioTX(2);
 iarduino_RF433_Receiver radioRX(4);
 
+enum class AlertType {
+    STUDY = 0,
+    ERROR = 1,
+    TEMPERATURE = 2,
+    HUMIDITY = 3,
+    MOTION = 4,
+    BATTERY = 5
+};
+
+const char* alertTypeStrings[] = {"study", "error", "temperature", "humidity", "motion", "battery"};
+
 enum class SensorType {
     TEMPERATURE = 0,
     HUMIDITY = 1,
@@ -105,7 +116,14 @@ void loop() {
     Serial.print(t);
     Serial.print(" *C ");
     if (!isnan(t)) {
-      sendSensorData(SensorType::TEMPERATURE, t, "C");
+      if (t > 40.0) {
+        char alertMsg[60];
+        sprintf(alertMsg, "High temperature detected: %.1f°C", t);
+        sendAlertData(AlertType::TEMPERATURE, alertMsg, "warning");
+      }
+      else {
+        sendSensorData(SensorType::TEMPERATURE, t, "C");
+      }
     }
     if (!isnan(h)) {
       sendSensorData(SensorType::HUMIDITY, h, "H");
@@ -165,11 +183,11 @@ void sendSensorData(SensorType type, float value, const char* message) {
 }
 
 
-void sendAlertrData(SensorType type, float value, const char* message) {
+void sendAlertData(AlertType alert_type, const char* message, const char* severity) {
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient http;
 
-        String fullUrl = String(serverUrl) + "/api/v1/devices/{device_id}/readings";
+        String fullUrl = String(serverUrl) + "/api/v1/alerts/";
         
         http.begin(fullUrl);
         http.addHeader("Content-Type", "application/json");
@@ -177,16 +195,15 @@ void sendAlertrData(SensorType type, float value, const char* message) {
         // Создаем JSON объект
         DynamicJsonDocument doc(512);
         doc["device_id"] = id;
-        doc["sensor_type"] = sensorTypeStrings[static_cast<int>(type)];
-        doc["value"] = value;
-        doc["unit"] = message;
+        doc["message"] = message;
+        doc["severity"] = severity;
+        doc["alert_type"] = alertTypeStrings[static_cast<int>(alert_type)];
         
         String jsonString;
         serializeJson(doc, jsonString);
         int httpResponseCode = http.POST(jsonString);
         
-        Serial.print("HTTP Response code: ");
-        Serial.println(httpResponseCode);
+        Serial.print("Sending alert: ");
         
         if (httpResponseCode > 0) {
             String response = http.getString();
