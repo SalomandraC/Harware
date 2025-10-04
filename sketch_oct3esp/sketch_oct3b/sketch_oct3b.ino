@@ -1,6 +1,7 @@
 #include <iarduino_RF433_Transmitter.h>
 #include <iarduino_RF433_Receiver.h>
 #include "DHT.h"
+#include "WiFi.h"
 #define DHTPIN 33
 #define DHTTYPE DHT11
 
@@ -10,15 +11,20 @@ iarduino_RF433_Receiver radioRX(4);
 const int buzzerPin = 27;
 const int lightsPin = 26;
 
+const char* ssid = "narzo 50A";
+const char* password =  "m7ivjj7c";
+
 unsigned long lastSendRadio = 0;
 unsigned long lastSendTemp = 0;
 unsigned long lastBuzzerTime = 0;
 bool buzzerState = false;
 int number = 1;
+byte tries = 10;
 
 DHT dht(DHTPIN, DHTTYPE);
 void setup() {
   Serial.begin(115200);
+  WiFi.begin(ssid, password);
   dht.begin();
   pinMode(buzzerPin, OUTPUT);
   pinMode(lightsPin, OUTPUT);
@@ -28,6 +34,20 @@ void setup() {
   radioRX.begin(1000);                   
   radioRX.openReadingPipe(5);
   radioRX.startListening();
+
+  while (--tries && WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.println(".");
+  }
+  if (WiFi.status() != WL_CONNECTED)  {
+    Serial.println("Non Connecting to WiFi..");
+  }
+  else  {
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+  }
   
   Serial.println("ESP32 Ready");
 }
@@ -73,7 +93,7 @@ void loop() {
   
   // Пищалка и светодиод (включаем на 1 секунду каждые 10 секунд)
   if (millis() - lastBuzzerTime > 5000) {
-    tone(buzzerPin, 500);
+    tone(buzzerPin, 1500);
     digitalWrite(lightsPin, HIGH);
     delay(1000); // Включаем на 1 секунду
     noTone(buzzerPin);
