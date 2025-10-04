@@ -32,6 +32,7 @@ const char* sensorTypeStrings[] = {"temperature", "humidity", "alert"};
 
 const int buzzerPin = 27;
 const int lightsPin = 26;
+const int pin_analog_flame = 32;
 
 const char* ssid = "narzo 50A";
 const char* password =  "m7ivjj7c";
@@ -42,6 +43,7 @@ const char* serverUrl = "https://2g6nw0-194-87-191-168.ru.tuna.am";
 unsigned long lastSendRadio = 0;
 unsigned long lastSendTemp = 0;
 unsigned long lastBuzzerTime = 0;
+unsigned long lastFlameTime = 0;
 bool buzzerState = false;
 int number = 1;
 byte tries = 10;
@@ -53,6 +55,7 @@ void setup() {
   dht.begin();
   pinMode(buzzerPin, OUTPUT);
   pinMode(lightsPin, OUTPUT);
+  pinMode(pin_analog_flame, INPUT);
   
   radioTX.begin(1000);                   
   radioTX.openWritingPipe(5);          
@@ -130,9 +133,22 @@ void loop() {
     }
     lastSendTemp = millis();
   }
-  
-  
-  // Пищалка и светодиод (включаем на 1 секунду каждые 10 секунд)
+  // Проверка пламени раз в секунду
+  if (millis() - lastFlameTime > 1000) {
+    float Analog = analogRead (pin_analog_flame);
+    Serial.println("Значение аналогового сигнала огня: "); 
+    Serial.print(Analog);
+    if (Analog < 5000){
+      sendSensorData(SensorType::FIRE, Analog, "");
+    } else {
+      char* alertMsg = "FIRE!";
+
+      sendAlertData(AlertType::MOTION, alertMsg, "alert");
+    }
+
+    lastFlameTime = millis();
+  }
+  // Пищалка и светодиод (включаем на 1 секунду каждые 5 секунд)
   if (millis() - lastBuzzerTime > 5000) {
     tone(buzzerPin, 1500);
     digitalWrite(lightsPin, HIGH);
