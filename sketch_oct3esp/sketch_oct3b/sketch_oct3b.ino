@@ -4,28 +4,35 @@
 #include "WiFi.h"
 #include "HTTPClient.h"
 #include "ArduinoJson.h"
+#include <RH_ASK.h>
+#include <SPI.h>
 #define DHTPIN 33
 #define DHTTYPE DHT11
-
-iarduino_RF433_Transmitter radioTX(2);
-iarduino_RF433_Receiver radioRX(4);
-
-enum class AlertType {
-    STUDY = 0,
-    ERROR = 1,
-    TEMPERATURE = 2,
-    HUMIDITY = 3,
-    MOTION = 4,
-    BATTERY = 5
-};
-
 const char* alertTypeStrings[] = {"study", "error", "temperature", "humidity", "motion", "battery"};
+
+RH_ASK rfdriver(4000, 0, 2, 0);
 
 enum class SensorType {
     TEMPERATURE = 0,
     HUMIDITY = 1,
     ALERT = 2,
     FIRE = 3
+};
+
+enum class AlertType {
+    STUDY,
+    ERROR,
+    TEMPERATURE,
+    HUMIDITY,
+    MOTION,
+    BATTERY
+};
+
+enum class Alert {
+    SOUND,
+    LIGHT,
+    SLIGHT,
+    NONE_ALERT
 };
 
 const char* sensorTypeStrings[] = {"temperature", "humidity", "alert"};
@@ -38,7 +45,7 @@ const char* ssid = "narzo 50A";
 const char* password =  "m7ivjj7c";
 
 const char* id = "EIto";
-const char* serverUrl = "https://2g6nw0-194-87-191-168.ru.tuna.am";
+const char* serverUrl = "https://ghlwjg-95-174-102-182.ru.tuna.am";
 
 unsigned long lastSendRadio = 0;
 unsigned long lastSendTemp = 0;
@@ -49,6 +56,9 @@ int number = 1;
 byte tries = 10;
 
 DHT dht(DHTPIN, DHTTYPE);
+Alert alert = Alert::NONE_ALERT;
+
+
 void setup() {
   Serial.begin(115200);
   WiFi.begin(ssid, password);
@@ -56,12 +66,7 @@ void setup() {
   pinMode(buzzerPin, OUTPUT);
   pinMode(lightsPin, OUTPUT);
   pinMode(pin_analog_flame, INPUT);
-  
-  radioTX.begin(1000);                   
-  radioTX.openWritingPipe(5);          
-  radioRX.begin(1000);                   
-  radioRX.openReadingPipe(5);
-  radioRX.startListening();
+
 
   while (--tries && WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -76,36 +81,16 @@ void setup() {
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
   }
-  
+
+  if (!rfdriver.init()) {
+    Serial.println("RF init failed");
+  } else {
+    Serial.println("RF init OK");
+  }
   Serial.println("ESP32 Ready");
 }
 
-void loop() {
-  // RF передача каждые 2 секунды
-  if (millis() - lastSendRadio > 2000) {
-    char data[10];
-    sprintf(data, "%d", number);      
-    radioTX.write(&data, sizeof(data));
-    
-    Serial.print("Sent: ");
-    Serial.println(number);
-    number++;
-    if (number > 10) number = 1;
-    if(number > 4 && number < 7){
-      sendSensorData(SensorType::ALERT, 1, "%");
-    }
-    
-    lastSendRadio = millis();
-  }
-  
-  // RF прием
-  if (radioRX.available()) {
-    char receivedData[10] = "";
-    radioRX.read(&receivedData, sizeof(receivedData));
-    Serial.println("Received: ");
-    Serial.print(receivedData);
-  }
-  
+void loop() {  
   // Температура каждые 2 секунды
   if (millis() - lastSendTemp > 2000) {
     // считывание данных температуры и влажности
@@ -118,20 +103,39 @@ void loop() {
     Serial.print("Temperature: ");  //  "Температура: "
     Serial.print(t);
     Serial.print(" *C ");
+    float ht = t + 10000;
+    float hh = h + 20000;
+    char buf1[16];
+    char buf2[16];
+    snprintf(buf1, sizeof(buf1), "%f", hh);
+    rfdriver.send((uint8_t*)buf1, strlen(buf1));
+    rfdriver.waitPacketSent();
+    snprintf(buf2, sizeof(buf2), "%f", ht);
+    rfdriver.send((uint8_t*)buf2, strlen(buf2));
+    rfdriver.waitPacketSent();
     if (!isnan(t)) {
       if (t > 40.0) {
         char alertMsg[60];
         sprintf(alertMsg, "High temperature detected: %.1f°C", t);
-        sendAlertData(AlertType::TEMPERATURE, alertMsg, "warning");
+        sendAlertData(AlertType::TEMPERATURE, alertMsg, "warning", "error");
+        alert = Alert::SOUND;
       }
       else {
         sendSensorData(SensorType::TEMPERATURE, t, "C");
       }
     }
     if (!isnan(h)) {
-      sendSensorData(SensorType::HUMIDITY, h, "H");
+      if (h > 80.0) {
+        char alertMsg[60];
+        sprintf(alertMsg, "High humidity detected");
+        sendAlertData(AlertType::HUMIDITY, alertMsg, "warning", "error");
+        alert = Alert::LIGHT;
+      }
+      else {
+        sendSensorData(SensorType::HUMIDITY, h, "H");
+      }
+      lastSendTemp = millis();
     }
-    lastSendTemp = millis();
   }
   // Проверка пламени раз в секунду
   if (millis() - lastFlameTime > 1000) {
@@ -139,23 +143,33 @@ void loop() {
     Serial.println("Значение аналогового сигнала огня: "); 
     Serial.print(Analog);
     if (Analog < 5000){
-      sendSensorData(SensorType::FIRE, Analog, "");
+      sendSensorData(SensorType::FIRE, Analog, "no fire");
     } else {
       char* alertMsg = "FIRE!";
-
-      sendAlertData(AlertType::MOTION, alertMsg, "alert");
+      sendAlertData(AlertType::MOTION, alertMsg, "alert", "error");
+      alert = Alert::SLIGHT;
     }
-
+    char buf[16];
+    float hAnalog = Analog + 30000;
+    snprintf(buf, sizeof(buf), "%f", hAnalog);
+    rfdriver.send((uint8_t*)buf, strlen(buf));
+    rfdriver.waitPacketSent();
     lastFlameTime = millis();
   }
   // Пищалка и светодиод (включаем на 1 секунду каждые 5 секунд)
-  if (millis() - lastBuzzerTime > 5000) {
-    tone(buzzerPin, 1500);
+  if (alert == Alert::LIGHT) {
     digitalWrite(lightsPin, HIGH);
-    delay(1000); // Включаем на 1 секунду
+  } 
+  else if (alert == Alert::SOUND){
+    tone(buzzerPin, 1500);
+  }
+  else if (alert == Alert::SLIGHT) {
+    digitalWrite(lightsPin, HIGH);
+    tone(buzzerPin, 1500);
+  }
+  else {
     noTone(buzzerPin);
     digitalWrite(lightsPin, LOW);
-    lastBuzzerTime = millis();
   }
 
   delay(10);
@@ -199,7 +213,7 @@ void sendSensorData(SensorType type, float value, const char* message) {
 }
 
 
-void sendAlertData(AlertType alert_type, const char* message, const char* severity) {
+void sendAlertData(AlertType alert_type, const char* message, const char* severity, const char* err) {
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient http;
 
@@ -213,7 +227,7 @@ void sendAlertData(AlertType alert_type, const char* message, const char* severi
         doc["device_id"] = id;
         doc["message"] = message;
         doc["severity"] = severity;
-        doc["alert_type"] = alertTypeStrings[static_cast<int>(alert_type)];
+        doc["alert_type"] = err;
         
         String jsonString;
         serializeJson(doc, jsonString);
