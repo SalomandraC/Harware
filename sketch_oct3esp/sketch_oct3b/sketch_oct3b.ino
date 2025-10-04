@@ -10,7 +10,7 @@
 #define DHTTYPE DHT11
 const char* alertTypeStrings[] = {"study", "error", "temperature", "humidity", "motion", "battery"};
 
-RH_ASK rfdriver(4000, 0, 2, 0);
+RH_ASK rfdriver(2000, 0, 2, 0);
 
 enum class SensorType {
     TEMPERATURE = 0,
@@ -18,6 +18,30 @@ enum class SensorType {
     ALERT = 2,
     FIRE = 3
 };
+
+enum class SensorType {
+    TEMPERATURE = 0,
+    HUMIDITY = 1,
+    ALERT = 2,
+    FIRE = 3
+};
+
+
+String getSensorTypeName(SensorType sensor) {
+    switch (sensor) {
+        case SensorType::TEMPERATURE:
+            return "temperature";
+        case SensorType::HUMIDITY:
+            return "humidity";
+        case SensorType::ALERT:
+            return "alert";
+        case SensorType::FIRE:
+            return "fire";
+        default:
+            return "UNKNOWN";
+    }
+}
+
 
 enum class AlertType {
     STUDY,
@@ -35,7 +59,25 @@ enum class Alert {
     NONE_ALERT
 };
 
-const char* sensorTypeStrings[] = {"temperature", "humidity", "alert"};
+String getAlertMessage(AlertType alert) {
+    switch (alert) {
+        case AlertType::STUDY:
+            return "study";
+        case AlertType::ERROR:
+            return "error";
+        case AlertType::TEMPERATURE:
+            return "temperature";
+        case AlertType::HUMIDITY:
+            return "humidity level critical";
+        case AlertType::MOTION:
+            return "motion";
+        case AlertType::BATTERY:
+            return "battery";
+        default:
+            return "Unknown alert";
+    }
+}
+
 
 const int buzzerPin = 27;
 const int lightsPin = 26;
@@ -117,7 +159,7 @@ void loop() {
       if (t > 40.0) {
         char alertMsg[60];
         sprintf(alertMsg, "High temperature detected: %.1f°C", t);
-        sendAlertData(AlertType::TEMPERATURE, alertMsg, "warning", "error");
+        sendAlertData(AlertType::TEMPERATURE, alertMsg, "warning");
         alert = Alert::SOUND;
       }
       else {
@@ -128,7 +170,7 @@ void loop() {
       if (h > 80.0) {
         char alertMsg[60];
         sprintf(alertMsg, "High humidity detected");
-        sendAlertData(AlertType::HUMIDITY, alertMsg, "warning", "error");
+        sendAlertData(AlertType::HUMIDITY, alertMsg, "warning");
         alert = Alert::LIGHT;
       }
       else {
@@ -143,10 +185,10 @@ void loop() {
     Serial.println("Значение аналогового сигнала огня: "); 
     Serial.print(Analog);
     if (Analog < 5000){
-      sendSensorData(SensorType::FIRE, Analog, "no fire");
+      sendSensorData(SensorType::FIRE, Analog, "F");
     } else {
       char* alertMsg = "FIRE!";
-      sendAlertData(AlertType::MOTION, alertMsg, "alert", "error");
+      sendAlertData(AlertType::MOTION, alertMsg, "alert");
       alert = Alert::SLIGHT;
     }
     char buf[16];
@@ -175,7 +217,7 @@ void loop() {
   delay(10);
 }
 
-void sendSensorData(SensorType type, float value, const char* message) {
+void sendSensorData(SensorType type, float value, const char* unit) {
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient http;
 
@@ -187,9 +229,9 @@ void sendSensorData(SensorType type, float value, const char* message) {
         // Создаем JSON объект
         DynamicJsonDocument doc(512);
         doc["device_id"] = id;
-        doc["sensor_type"] = sensorTypeStrings[static_cast<int>(type)];
+        doc["sensor_type"] = getSensorTypeName(type);
         doc["value"] = value;
-        doc["unit"] = message;
+        doc["unit"] = unit;
         
         String jsonString;
         serializeJson(doc, jsonString);
@@ -213,7 +255,7 @@ void sendSensorData(SensorType type, float value, const char* message) {
 }
 
 
-void sendAlertData(AlertType alert_type, const char* message, const char* severity, const char* err) {
+void sendAlertData(AlertType alert_type, const char* message, const char* severity) {
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient http;
 
@@ -227,7 +269,7 @@ void sendAlertData(AlertType alert_type, const char* message, const char* severi
         doc["device_id"] = id;
         doc["message"] = message;
         doc["severity"] = severity;
-        doc["alert_type"] = err;
+        doc["alert_type"] = getAlertMessage(alert_type);
         
         String jsonString;
         serializeJson(doc, jsonString);
