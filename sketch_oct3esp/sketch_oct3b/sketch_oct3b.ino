@@ -11,12 +11,6 @@
 
 RH_ASK rfdriver(2000, 0, 2, 0);
 
-enum class SensorType {
-    TEMPERATURE = 0,
-    HUMIDITY = 1,
-    ALERT = 2,
-    FIRE = 3
-};
 
 enum class SensorType {
     TEMPERATURE = 0,
@@ -24,22 +18,6 @@ enum class SensorType {
     ALERT = 2,
     FIRE = 3
 };
-
-
-String getSensorTypeName(SensorType sensor) {
-    switch (sensor) {
-        case SensorType::TEMPERATURE:
-            return "temperature";
-        case SensorType::HUMIDITY:
-            return "humidity";
-        case SensorType::ALERT:
-            return "alert";
-        case SensorType::FIRE:
-            return "fire";
-        default:
-            return "UNKNOWN";
-    }
-}
 
 
 enum class AlertType {
@@ -57,6 +35,26 @@ enum class Alert {
     SLIGHT,
     NONE_ALERT
 };
+
+
+void sendSensorData(SensorType type, float value, const char* unit);
+void sendAlertData(AlertType alert_type, const char* message, const char* severity);
+
+String getSensorTypeName(SensorType sensor) {
+    switch (sensor) {
+        case SensorType::TEMPERATURE:
+            return "temperature";
+        case SensorType::HUMIDITY:
+            return "humidity";
+        case SensorType::ALERT:
+            return "alert";
+        case SensorType::FIRE:
+            return "fire";
+        default:
+            return "UNKNOWN";
+    }
+}
+
 
 String getAlertMessage(AlertType alert) {
     switch (alert) {
@@ -82,8 +80,8 @@ const int buzzerPin = 27;
 const int lightsPin = 26;
 const int pin_analog_flame = 32;
 
-const char* ssid = "narzo 50A";
-const char* password =  "m7ivjj7c";
+const char* ssid = "realme 8";
+const char* password =  "einmn6cw";
 
 const char* id = "EIto";
 const char* serverUrl = "https://ghlwjg-95-174-102-182.ru.tuna.am";
@@ -289,5 +287,3 @@ void sendAlertData(AlertType alert_type, const char* message, const char* severi
         Serial.println("WiFi not connected!");
     }
 }
-
-
