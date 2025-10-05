@@ -1,16 +1,16 @@
-#include <iarduino_RF433_Transmitter.h>
-#include <iarduino_RF433_Receiver.h>
 #include "DHT.h"
 #include "WiFi.h"
 #include "HTTPClient.h"
 #include "ArduinoJson.h"
 #include <RH_ASK.h>
 #include <SPI.h>
+#include <Preferences.h>
 #define DHTPIN 33
 #define DHTTYPE DHT11
-const char* alertTypeStrings[] = {"study", "error", "temperature", "humidity", "motion", "battery"};
 
-RH_ASK rfdriver(2000, 0, 2, 0);
+RH_ASK rfdriver(4000, 4, 0, 0);
+
+Preferences preferences_fire, preferences_temperature, preferences_had;
 
 enum class SensorType {
     TEMPERATURE = 0,
@@ -18,6 +18,7 @@ enum class SensorType {
     ALERT = 2,
     FIRE = 3
 };
+
 
 enum class AlertType {
     STUDY,
@@ -35,7 +36,83 @@ enum class Alert {
     NONE_ALERT
 };
 
-const char* sensorTypeStrings[] = {"temperature", "humidity", "alert"};
+
+void sendSensorData(SensorType type, float value, const char* unit);
+void sendAlertData(AlertType alert_type, const char* message, const char* severity);
+
+String getSensorTypeName(SensorType sensor) {
+    switch (sensor) {
+        case SensorType::TEMPERATURE:
+            return "temperature";
+        case SensorType::HUMIDITY:
+            return "humidity";
+        case SensorType::ALERT:
+            return "alert";
+        case SensorType::FIRE:
+            return "fire";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+
+String getAlertMessage(AlertType alert) {
+    switch (alert) {
+        case AlertType::STUDY:
+            return "study";
+        case AlertType::ERROR:
+            return "error";
+        case AlertType::TEMPERATURE:
+            return "temperature";
+        case AlertType::HUMIDITY:
+            return "humidity level critical";
+        case AlertType::MOTION:
+            return "motion";
+        case AlertType::BATTERY:
+            return "battery";
+        default:
+            return "Unknown alert";
+    }
+}
+
+void saveMaxFire(float value) {
+  preferences_fire.begin("fire-settings", false); 
+  preferences_fire.putInt("maxFire", value);
+  preferences_fire.end();
+}
+
+float loadMaxFire() {
+  preferences_fire.begin("fire-settings", true); 
+  float value = preferences_fire.getInt("maxFire", 5000); 
+  preferences_fire.end();
+  return value;
+}
+
+void saveMaxTemp(float value) {
+  preferences_temperature.begin("temp-settings", false); 
+  preferences_temperature.putInt("maxTemp", value);
+  preferences_temperature.end();
+}
+
+float loadMaxTemp() {
+  preferences_temperature.begin("temp-settings", true); 
+  float value = preferences_temperature.getInt("maxTemp", 70); 
+  preferences_temperature.end();
+  return value;
+}
+
+void saveMaxHad(float value) {
+  preferences_had.begin("had-settings", false); 
+  preferences_had.putInt("maxHad", value);
+  preferences_had.end();
+}
+
+float loadMaxHad() {
+  preferences_had.begin("had-settings", true); 
+  float value = preferences_had.getInt("maxHad", 70); 
+  preferences_had.end();
+  return value;
+}
 
 const int buzzerPin = 27;
 const int lightsPin = 26;
@@ -45,12 +122,14 @@ const char* ssid = "narzo 50A";
 const char* password =  "m7ivjj7c";
 
 const char* id = "EIto";
-const char* serverUrl = "https://ghlwjg-95-174-102-182.ru.tuna.am";
+const char* serverUrl = "https://3piucp-194-87-191-168.ru.tuna.am";
 
 unsigned long lastSendRadio = 0;
 unsigned long lastSendTemp = 0;
 unsigned long lastBuzzerTime = 0;
 unsigned long lastFlameTime = 0;
+unsigned long getQuest = 0;
+float fire, temp, had;
 bool buzzerState = false;
 int number = 1;
 byte tries = 10;
@@ -66,7 +145,12 @@ void setup() {
   pinMode(buzzerPin, OUTPUT);
   pinMode(lightsPin, OUTPUT);
   pinMode(pin_analog_flame, INPUT);
-
+  float maxFire = loadMaxFire();
+  float maxTemp = loadMaxTemp();
+  float maxHad = loadMaxTemp();
+  fire = maxFire;
+  temp = maxTemp;
+  had = maxHad;
 
   while (--tries && WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -91,6 +175,19 @@ void setup() {
 }
 
 void loop() {  
+  uint8_t buf[RH_ASK_MAX_MESSAGE_LEN];
+  uint8_t buflen = sizeof(buf);
+
+  if (millis() - getQuest > 15000){
+    getServerData();
+    getQuest = millis();
+  }
+
+  if (rfdriver.recv(buf, &buflen)) { // блокирует короткий момент при приеме
+    buf[buflen] = 0; // терминируем строку
+    Serial.print("Received: ");
+    Serial.println((char*)buf);
+  }
   // Температура каждые 2 секунды
   if (millis() - lastSendTemp > 2000) {
     // считывание данных температуры и влажности
@@ -103,21 +200,21 @@ void loop() {
     Serial.print("Temperature: ");  //  "Температура: "
     Serial.print(t);
     Serial.print(" *C ");
-    float ht = t + 10000;
-    float hh = h + 20000;
-    char buf1[16];
-    char buf2[16];
-    snprintf(buf1, sizeof(buf1), "%f", hh);
-    rfdriver.send((uint8_t*)buf1, strlen(buf1));
-    rfdriver.waitPacketSent();
-    snprintf(buf2, sizeof(buf2), "%f", ht);
-    rfdriver.send((uint8_t*)buf2, strlen(buf2));
-    rfdriver.waitPacketSent();
+    // float ht = t + 10000;
+    // float hh = h + 20000;
+    // char buf1[16];
+    // char buf2[16];
+    // snprintf(buf1, sizeof(buf1), "%f", hh);
+    // rfdriver.send((uint8_t*)buf1, strlen(buf1));
+    // rfdriver.waitPacketSent();
+    // snprintf(buf2, sizeof(buf2), "%f", ht);
+    // rfdriver.send((uint8_t*)buf2, strlen(buf2));
+    // rfdriver.waitPacketSent();
     if (!isnan(t)) {
-      if (t > 40.0) {
+      if (t > temp) {
         char alertMsg[60];
         sprintf(alertMsg, "High temperature detected: %.1f°C", t);
-        sendAlertData(AlertType::TEMPERATURE, alertMsg, "warning", "error");
+        sendAlertData(AlertType::TEMPERATURE, alertMsg, "warning");
         alert = Alert::SOUND;
       }
       else {
@@ -125,10 +222,10 @@ void loop() {
       }
     }
     if (!isnan(h)) {
-      if (h > 80.0) {
+      if (h > had) {
         char alertMsg[60];
         sprintf(alertMsg, "High humidity detected");
-        sendAlertData(AlertType::HUMIDITY, alertMsg, "warning", "error");
+        sendAlertData(AlertType::HUMIDITY, alertMsg, "warning");
         alert = Alert::LIGHT;
       }
       else {
@@ -142,18 +239,18 @@ void loop() {
     float Analog = analogRead (pin_analog_flame);
     Serial.println("Значение аналогового сигнала огня: "); 
     Serial.print(Analog);
-    if (Analog < 5000){
-      sendSensorData(SensorType::FIRE, Analog, "no fire");
+    if (Analog < fire){
+      sendSensorData(SensorType::FIRE, Analog, "F");
     } else {
       char* alertMsg = "FIRE!";
-      sendAlertData(AlertType::MOTION, alertMsg, "alert", "error");
+      sendAlertData(AlertType::MOTION, alertMsg, "alert");
       alert = Alert::SLIGHT;
     }
     char buf[16];
     float hAnalog = Analog + 30000;
-    snprintf(buf, sizeof(buf), "%f", hAnalog);
-    rfdriver.send((uint8_t*)buf, strlen(buf));
-    rfdriver.waitPacketSent();
+    // snprintf(buf, sizeof(buf), "%f", hAnalog);
+    // rfdriver.send((uint8_t*)buf, strlen(buf));
+    // rfdriver.waitPacketSent();
     lastFlameTime = millis();
   }
   // Пищалка и светодиод (включаем на 1 секунду каждые 5 секунд)
@@ -175,11 +272,140 @@ void loop() {
   delay(10);
 }
 
-void sendSensorData(SensorType type, float value, const char* message) {
+void getServerData(){
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+
+    String fullUrl = String(serverUrl) + "/api/v1/device/commands/" + id + "/pending";
+
+    http.begin(fullUrl);
+
+    http.addHeader("Content-Type", "application/json");
+
+    int httpResponseCode = http.GET();
+
+    if(httpResponseCode == 200){
+      String payload = http.getString();
+      Serial.println("Response: " + payload);
+      
+      DynamicJsonDocument doc(1024);
+      DeserializationError error = deserializeJson(doc, payload);
+      
+      if (!error) {
+        if (doc.is<JsonArray>() && doc.size() > 0) {
+          for (JsonObject command : doc.as<JsonArray>()) {
+            String device_id = command["device_id"];
+            String action = command["action"];
+            String status = command["status"];
+            String par = command["value"];
+            String command_id = command["id"];
+            String created_at = command["created_at"];
+            
+            Serial.println("Command received:");
+            Serial.println("  ID: " + command_id);
+            Serial.println("  Device: " + device_id);
+            Serial.println("  Action: " + action);
+            Serial.println("  Status: " + status);
+            Serial.println("  Created: " + created_at);
+            if (action == "toggle_alert") {
+              handleToggleAlert();
+            }
+            else if (action == "set_temerature_limit" && par){
+              float param = par.toFloat();
+              handleSetTemp(param);
+              markCommandAsCompleted(command_id);
+            }
+            else if (action == "set_fire_limit" && par){
+              float param = par.toFloat();
+              handleSetFire(param);
+              markCommandAsCompleted(command_id);
+            }
+            else if (action == "set_humidity_limit" && par){
+              float param = par.toFloat();
+              handleSetHad(param);
+              markCommandAsCompleted(command_id);
+            }
+          }
+        } else {
+          Serial.println("No pending commands");
+        }
+      } else {
+        Serial.println("JSON parsing failed: " + String(error.c_str()));
+      }
+      
+    } else if (httpResponseCode == 422) {
+      Serial.println("Validation Error");
+      String errorPayload = http.getString();
+      Serial.println("Error details: " + errorPayload);
+    } else {
+      Serial.println("HTTP Error: " + String(httpResponseCode));
+      String errorPayload = http.getString();
+      Serial.println("Error response: " + errorPayload);
+    }
+    http.end();
+    
+  } else {
+    Serial.println("WiFi not connected");
+  }
+}
+
+void handleToggleAlert() {
+  if (alert == Alert::NONE_ALERT){
+    alert = Alert::SLIGHT;
+  }
+  else{
+    alert = Alert::NONE_ALERT;
+  }
+  return;
+}
+
+void handleSetTemp(float param) {
+  saveMaxTemp(param);
+  Serial.println("temp " + String(param));
+  temp = param;
+  return;
+}
+
+void handleSetFire(float param){
+  fire = param;
+  Serial.println("temp " + String(param));
+  saveMaxFire(param);
+  return;
+}
+
+void handleSetHad(float param){
+  had = param;
+  Serial.println("temp " + String(param));
+  saveMaxHad(param);
+  return;
+}
+
+void markCommandAsCompleted(String commandId) {
+  HTTPClient http;
+  DynamicJsonDocument doc(1024);
+  String completeUrl = String(serverUrl) + "/api/v1/device/commands/status";
+  http.begin(completeUrl);
+  http.addHeader("Content-Type", "application/json");
+  doc["device_id"] = id;
+  doc["command_id"] = commandId;
+  doc["new_status"] = "finished";
+  String jsonString;
+  serializeJson(doc, jsonString);
+  int httpCode = http.PUT(jsonString);
+  
+  if (httpCode == 200) {
+    Serial.println("Command marked as completed");
+  } else {
+    Serial.println("Failed to mark command as completed: " + String(httpCode));
+  }
+  http.end();
+}
+
+void sendSensorData(SensorType type, float value, const char* unit) {
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient http;
 
-        String fullUrl = String(serverUrl) + "/api/v1/devices/{device_id}/readings";
+        String fullUrl = String(serverUrl) + "/api/v1/devices/" + id +"/readings";
         
         http.begin(fullUrl);
         http.addHeader("Content-Type", "application/json");
@@ -187,9 +413,9 @@ void sendSensorData(SensorType type, float value, const char* message) {
         // Создаем JSON объект
         DynamicJsonDocument doc(512);
         doc["device_id"] = id;
-        doc["sensor_type"] = sensorTypeStrings[static_cast<int>(type)];
+        doc["sensor_type"] = getSensorTypeName(type);
         doc["value"] = value;
-        doc["unit"] = message;
+        doc["unit"] = unit;
         
         String jsonString;
         serializeJson(doc, jsonString);
@@ -213,7 +439,7 @@ void sendSensorData(SensorType type, float value, const char* message) {
 }
 
 
-void sendAlertData(AlertType alert_type, const char* message, const char* severity, const char* err) {
+void sendAlertData(AlertType alert_type, const char* message, const char* severity) {
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient http;
 
@@ -227,7 +453,7 @@ void sendAlertData(AlertType alert_type, const char* message, const char* severi
         doc["device_id"] = id;
         doc["message"] = message;
         doc["severity"] = severity;
-        doc["alert_type"] = err;
+        doc["alert_type"] = getAlertMessage(alert_type);
         
         String jsonString;
         serializeJson(doc, jsonString);
@@ -248,5 +474,3 @@ void sendAlertData(AlertType alert_type, const char* message, const char* severi
         Serial.println("WiFi not connected!");
     }
 }
-
-
