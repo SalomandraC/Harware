@@ -5,10 +5,11 @@
 #include <RH_ASK.h>
 #include <SPI.h>
 #include <Preferences.h>
+#include <ESP32Servo.h>
 #define DHTPIN 33
 #define DHTTYPE DHT11
 
-RH_ASK rfdriver(4000, 4, 0, 0);
+RH_ASK rfdriver(2000, 5, 0, 0);
 
 Preferences preferences_fire, preferences_temperature, preferences_had;
 
@@ -134,6 +135,8 @@ bool buzzerState = false;
 int number = 1;
 byte tries = 10;
 
+Servo servo;
+
 DHT dht(DHTPIN, DHTTYPE);
 Alert alert = Alert::NONE_ALERT;
 
@@ -142,6 +145,7 @@ void setup() {
   Serial.begin(115200);
   WiFi.begin(ssid, password);
   dht.begin();
+  servo.attach(13);
   pinMode(buzzerPin, OUTPUT);
   pinMode(lightsPin, OUTPUT);
   pinMode(pin_analog_flame, INPUT);
@@ -177,17 +181,23 @@ void setup() {
 void loop() {  
   uint8_t buf[RH_ASK_MAX_MESSAGE_LEN];
   uint8_t buflen = sizeof(buf);
+  if (alert == Alert::SLIGHT){
+    for (int pos = 0; pos <= 360; pos += 3) {
+      servo.write(pos);
+      delay(15); 
+    }
+  }
+  if (rfdriver.recv(buf, &buflen)) { 
+    buf[buflen] = 0;
+    Serial.print("Received: ");
+    Serial.println((char*)buf);
+  }
 
   if (millis() - getQuest > 15000){
     getServerData();
     getQuest = millis();
   }
 
-  if (rfdriver.recv(buf, &buflen)) { // блокирует короткий момент при приеме
-    buf[buflen] = 0; // терминируем строку
-    Serial.print("Received: ");
-    Serial.println((char*)buf);
-  }
   // Температура каждые 2 секунды
   if (millis() - lastSendTemp > 2000) {
     // считывание данных температуры и влажности
