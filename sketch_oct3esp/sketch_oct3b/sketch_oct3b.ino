@@ -11,7 +11,7 @@
 
 RH_ASK rfdriver(2000, 5, 0, 0);
 
-Preferences preferences_fire, preferences_temperature, preferences_had;
+Preferences preferences_fire, preferences_temperature, preferences_had, preferences_servo;
 
 enum class SensorType {
     TEMPERATURE = 0,
@@ -57,8 +57,8 @@ String getSensorTypeName(SensorType sensor) {
 }
 
 
-String getAlertMessage(AlertType alert) {
-    switch (alert) {
+String getAlertMessage(AlertType alertA) {
+    switch (alertA) {
         case AlertType::STUDY:
             return "study";
         case AlertType::ERROR:
@@ -115,6 +115,19 @@ float loadMaxHad() {
   return value;
 }
 
+void saveMaxServo(int value) {
+  preferences_servo.begin("servo-settings", false); 
+  preferences_servo.putInt("maxServo", value);
+  preferences_servo.end();
+}
+
+int loadMaxServo() {
+  preferences_servo.begin("servo-settings", true); 
+  int value = preferences_servo.getInt("maxServo", 70); 
+  preferences_servo.end();
+  return value;
+}
+
 const int buzzerPin = 27;
 const int lightsPin = 26;
 const int pin_analog_flame = 32;
@@ -130,7 +143,9 @@ unsigned long lastSendTemp = 0;
 unsigned long lastBuzzerTime = 0;
 unsigned long lastFlameTime = 0;
 unsigned long getQuest = 0;
+unsigned long getValues = 0;
 float fire, temp, had;
+int curServo;
 bool buzzerState = false;
 int number = 1;
 byte tries = 10;
@@ -152,9 +167,14 @@ void setup() {
   float maxFire = loadMaxFire();
   float maxTemp = loadMaxTemp();
   float maxHad = loadMaxTemp();
+  int maxServo = loadMaxServo();
+
   fire = maxFire;
   temp = maxTemp;
   had = maxHad;
+  curServo = maxServo;
+
+  Serial.println(String(fire) + " " + String(temp) + " " + String(had));
 
   while (--tries && WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -175,24 +195,22 @@ void setup() {
   } else {
     Serial.println("RF init OK");
   }
+  servo.write(curServo);
   Serial.println("ESP32 Ready");
 }
 
 void loop() {  
   uint8_t buf[RH_ASK_MAX_MESSAGE_LEN];
   uint8_t buflen = sizeof(buf);
-  if (alert == Alert::SLIGHT){
-    for (int pos = 0; pos <= 360; pos += 3) {
-      servo.write(pos);
-      delay(15); 
-    }
-  }
   if (rfdriver.recv(buf, &buflen)) { 
     buf[buflen] = 0;
     Serial.print("Received: ");
     Serial.println((char*)buf);
   }
-
+  if (millis() - getValues > 20000){
+    postServo();
+    getValues = millis();
+  }
   if (millis() - getQuest > 15000){
     getServerData();
     getQuest = millis();
@@ -282,6 +300,49 @@ void loop() {
   delay(10);
 }
 
+void postServo() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected!");
+    return;
+  }
+
+  HTTPClient http;
+  String fullUrl = String(serverUrl) + "/api/v1/devices/" + id + "/values";
+
+  http.begin(fullUrl);
+  http.addHeader("Content-Type", "application/json");
+  
+  DynamicJsonDocument doc(512);
+  doc["device_id"] = id;
+  doc["temperature_limit"] = temp;
+  doc["humidity_limit"] = had;
+  doc["fire_limit"] = fire;
+  doc["servo_position"] = curServo;
+      
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  Serial.println("Sending POST request to: " + fullUrl);
+  Serial.println("JSON: " + jsonString);
+  
+  int httpResponseCode = http.POST(jsonString);
+      
+  Serial.print("HTTP Response code: ");
+  Serial.println(httpResponseCode);
+      
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.println("Response: " + response);
+    if (httpResponseCode == 200) {
+    }
+  } else {
+    Serial.print("Error in HTTP request: ");
+    Serial.println(httpResponseCode);
+  }
+      
+  http.end();
+}
+
 void getServerData(){
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
@@ -335,6 +396,11 @@ void getServerData(){
               handleSetHad(param);
               markCommandAsCompleted(command_id);
             }
+            else if (action == "set_servo_position" && par){
+              float param = par.toFloat();
+              handleServo(param);
+              markCommandAsCompleted(command_id);
+            }
           }
         } else {
           Serial.println("No pending commands");
@@ -369,24 +435,35 @@ void handleToggleAlert() {
   return;
 }
 
+void handleServo(float param) {
+  curServo = (int)param;
+  servo.write(curServo);
+  saveMaxServo((int)param);
+  return;
+}
+
 void handleSetTemp(float param) {
   saveMaxTemp(param);
   Serial.println("temp " + String(param));
   temp = param;
+  saveMaxTemp(param);
+  alert = Alert::NONE_ALERT;
   return;
 }
 
 void handleSetFire(float param){
   fire = param;
-  Serial.println("temp " + String(param));
+  Serial.println("fire " + String(param));
   saveMaxFire(param);
+  alert = Alert::NONE_ALERT;
   return;
 }
 
 void handleSetHad(float param){
   had = param;
-  Serial.println("temp " + String(param));
+  Serial.println("had " + String(param));
   saveMaxHad(param);
+  alert = Alert::NONE_ALERT;
   return;
 }
 
